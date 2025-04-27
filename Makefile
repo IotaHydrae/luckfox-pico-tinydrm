@@ -1,12 +1,14 @@
-# SPDX-License-Identifier: GPL-2.0-only
+ARCH := arm
+CROSS_COMPILE := ${HOME}/luckfox/pico/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf-
+KERN_DIR := ${HOME}/luckfox/pico/sysdrv/source/objs_kernel
 
-obj-$(CONFIG_DRM_CIRRUS_QEMU)		+= cirrus.o
-obj-$(CONFIG_DRM_GM12U320)		+= gm12u320.o
-obj-$(CONFIG_TINYDRM_HX8357D)		+= hx8357d.o
-obj-$(CONFIG_TINYDRM_ILI9225)		+= ili9225.o
-obj-$(CONFIG_TINYDRM_ILI9341)		+= ili9341.o
-obj-$(CONFIG_TINYDRM_ILI9486)		+= ili9486.o
-obj-$(CONFIG_TINYDRM_MI0283QT)		+= mi0283qt.o
-obj-$(CONFIG_TINYDRM_REPAPER)		+= repaper.o
-obj-$(CONFIG_TINYDRM_ST7586)		+= st7586.o
-obj-$(CONFIG_TINYDRM_ST7735R)		+= st7735r.o
+all:
+	make ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KERN_DIR) M=`pwd` modules
+clean:
+	make ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KERN_DIR) M=`pwd` modules clean
+
+clena: clean
+#CFLAGS_$(MODULE_NAME).o := -DDEBUG
+obj-m += st7586.o
+obj-m += st7567_tinydrm.o
+st7567_tinydrm-objs := st7567.o drm_mipi_dbi.o
