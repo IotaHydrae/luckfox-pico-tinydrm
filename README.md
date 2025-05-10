@@ -1,5 +1,7 @@
 # TinyDRM drivers for luckfox pico
 
+Kernel version is 5.10.160
+
 ```shell
 adb push output/image/boot.img /root
 adb shell "dd if=/root/boot.img of=/dev/mmcblk1p4 bs=1M && reboot"
