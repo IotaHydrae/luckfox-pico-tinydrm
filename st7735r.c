@@ -3,7 +3,7 @@
  * DRM driver for display panels connected to a Sitronix st7735r
  * display controller in SPI mode.
  *
- * Copyright 2025 Zheng Hua <hua.zheng@embeddedboys.com>
+ * Copyright 2025 Wooden Chair <hua.zheng@embeddedboys.com>
  */
 
 #include <linux/backlight.h>
@@ -31,10 +31,10 @@
 static void st7735r_fb_dirty(struct drm_framebuffer *fb, struct drm_rect *rect);
 
 static void st7735r_pipe_enable(struct drm_simple_display_pipe *pipe,
-			       struct drm_crtc_state *crtc_state,
-			       struct drm_plane_state *plane_state)
+				struct drm_crtc_state *crtc_state,
+				struct drm_plane_state *plane_state)
 {
-    struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
+	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
 	struct drm_framebuffer *fb = plane_state->fb;
 	struct mipi_dbi *dbi = &dbidev->dbi;
 	struct drm_rect rect = {
@@ -67,22 +67,22 @@ static void st7735r_pipe_enable(struct drm_simple_display_pipe *pipe,
 	msleep(10);
 
 	mipi_dbi_command(dbi, 0x11);
-    msleep(20);
+	msleep(20);
 
-    mipi_dbi_command(dbi, 0x36, 0x00);
-    mipi_dbi_command(dbi, 0x3a, 0x55);
+	mipi_dbi_command(dbi, 0x36, 0x00);
+	mipi_dbi_command(dbi, 0x3a, 0x55);
 
-    mipi_dbi_command(dbi, 0xb1, 0x40, 0x00, 0x00);
+	mipi_dbi_command(dbi, 0xb1, 0x40, 0x00, 0x00);
 
-    mipi_dbi_command(dbi, 0xc6, 0x05);
+	mipi_dbi_command(dbi, 0xc6, 0x05);
 
-    st7735r_fb_dirty(fb, &rect);
+	st7735r_fb_dirty(fb, &rect);
 
-    /* Set Display ON */
+	/* Set Display ON */
 	mipi_dbi_command(dbi, 0x29);
 	backlight_enable(dbidev->backlight);
 
-// out_exit:
+	// out_exit:
 	drm_dev_exit(idx);
 }
 
@@ -103,9 +103,9 @@ static void st7735r_pipe_disable(struct drm_simple_display_pipe *pipe)
 }
 
 static int st7735r_buf_copy(void *dst, struct drm_framebuffer *fb,
-			               struct drm_rect *clip, bool swap)
+			    struct drm_rect *clip, bool swap)
 {
-    struct drm_gem_object *gem = drm_gem_fb_get_obj(fb, 0);
+	struct drm_gem_object *gem = drm_gem_fb_get_obj(fb, 0);
 	struct drm_gem_cma_object *cma_obj = to_drm_gem_cma_obj(gem);
 	struct dma_buf_attachment *import_attach = gem->import_attach;
 	struct drm_format_name_buf format_name;
@@ -131,7 +131,8 @@ static int st7735r_buf_copy(void *dst, struct drm_framebuffer *fb,
 		break;
 	default:
 		drm_err_once(fb->dev, "Format is not supported: %s\n",
-			     drm_get_format_name(fb->format->format, &format_name));
+			     drm_get_format_name(fb->format->format,
+						 &format_name));
 		return -EINVAL;
 	}
 
@@ -141,11 +142,11 @@ static int st7735r_buf_copy(void *dst, struct drm_framebuffer *fb,
 	return ret;
 }
 
-static void st7735r_set_addr_win(struct mipi_dbi_dev *dbidev,
-               					unsigned int xs, unsigned int xe,
-               					unsigned int ys, unsigned int ye)
+static void st7735r_set_addr_win(struct mipi_dbi_dev *dbidev, unsigned int xs,
+				 unsigned int xe, unsigned int ys,
+				 unsigned int ye)
 {
-    struct mipi_dbi *dbi = &dbidev->dbi;
+	struct mipi_dbi *dbi = &dbidev->dbi;
 
 	xs += dbidev->left_offset;
 	xe += dbidev->left_offset;
@@ -160,14 +161,15 @@ static void st7735r_set_addr_win(struct mipi_dbi_dev *dbidev,
 
 static void st7735r_fb_dirty(struct drm_framebuffer *fb, struct drm_rect *rect)
 {
-   	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(fb->dev);
-   	unsigned int height = rect->y2 - rect->y1;
+	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(fb->dev);
+	unsigned int height = rect->y2 - rect->y1;
 	unsigned int width = rect->x2 - rect->x1;
 	struct mipi_dbi *dbi = &dbidev->dbi;
-    int ret = 0;
+	int ret = 0;
 	void *tr;
 
-   	DRM_DEBUG_KMS("Flushing [FB:%d] " DRM_RECT_FMT "\n", fb->base.id, DRM_RECT_ARG(rect));
+	DRM_DEBUG_KMS("Flushing [FB:%d] " DRM_RECT_FMT "\n", fb->base.id,
+		      DRM_RECT_ARG(rect));
 
 	ret = st7735r_buf_copy(dbidev->tx_buf, fb, rect, false);
 	if (ret)
@@ -175,21 +177,23 @@ static void st7735r_fb_dirty(struct drm_framebuffer *fb, struct drm_rect *rect)
 
 	tr = dbidev->tx_buf;
 
-	st7735r_set_addr_win(dbidev, rect->x1, rect->x2 - 1, rect->y1, rect->y2 - 1);
+	st7735r_set_addr_win(dbidev, rect->x1, rect->x2 - 1, rect->y1,
+			     rect->y2 - 1);
 
 	ret = mipi_dbi_command_buf(dbi, MIPI_DCS_WRITE_MEMORY_START, tr,
-	                width * height * 2);
+				   width * height * 2);
 
 err_msg:
 	if (ret)
-		dev_err_once(fb->dev->dev, "Failed to update display %d\n", ret);
+		dev_err_once(fb->dev->dev, "Failed to update display %d\n",
+			     ret);
 }
 
 static void st7735r_pipe_update(struct drm_simple_display_pipe *pipe,
-                               struct drm_plane_state *old_state)
+				struct drm_plane_state *old_state)
 {
-    struct drm_plane_state *state = pipe->plane.state;
-    struct drm_framebuffer *fb = state->fb;
+	struct drm_plane_state *state = pipe->plane.state;
+	struct drm_framebuffer *fb = state->fb;
 	struct drm_rect rect, full_rect;
 	int idx;
 
@@ -197,7 +201,7 @@ static void st7735r_pipe_update(struct drm_simple_display_pipe *pipe,
 		return;
 
 	if (!drm_dev_enter(fb->dev, &idx))
-	    return;
+		return;
 
 	full_rect.x1 = 0;
 	full_rect.x2 = fb->width;
@@ -211,132 +215,133 @@ static void st7735r_pipe_update(struct drm_simple_display_pipe *pipe,
 }
 
 static const u32 st7735r_formats[] = {
-    DRM_FORMAT_RGB565,
-    DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_RGB565,
+	DRM_FORMAT_XRGB8888,
 };
 
 static const struct drm_simple_display_pipe_funcs st7735r_pipe_funcs = {
-    .enable = st7735r_pipe_enable,
-    .disable = st7735r_pipe_disable,
-    .update = st7735r_pipe_update,
-    .prepare_fb = drm_gem_fb_simple_display_pipe_prepare_fb,
+	.enable = st7735r_pipe_enable,
+	.disable = st7735r_pipe_disable,
+	.update = st7735r_pipe_update,
+	.prepare_fb = drm_gem_fb_simple_display_pipe_prepare_fb,
 };
 
 static const struct drm_display_mode st7735r_mode = {
-    DRM_SIMPLE_MODE(128, 160, 41, 21),
+	DRM_SIMPLE_MODE(128, 160, 41, 21),
 };
 
 DEFINE_DRM_GEM_CMA_FOPS(st7735r_fops);
 
 static struct drm_driver st7735r_driver = {
-    .driver_features = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
-    .fops = &st7735r_fops,
-    DRM_GEM_CMA_DRIVER_OPS_VMAP,
-    .debugfs_init = mipi_dbi_debugfs_init,
-    .name = "st7735r",
-    .desc = "Sitronix st7735r",
-    .date = "20250509",
-    .major = 1,
-    .minor = 0,
+	.driver_features = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
+	.fops = &st7735r_fops,
+	DRM_GEM_CMA_DRIVER_OPS_VMAP,
+	.debugfs_init = mipi_dbi_debugfs_init,
+	.name = "st7735r",
+	.desc = "Sitronix st7735r",
+	.date = "20250509",
+	.major = 1,
+	.minor = 0,
 };
 
 static const struct of_device_id st7735r_of_match[] = {
-    { .compatible = "sitronix,st7567" },
-    { },
+	{ .compatible = "sitronix,st7567" },
+	{},
 };
 MODULE_DEVICE_TABLE(of, st7735r_of_match);
 
 static const struct spi_device_id st7735r_id[] = {
-    { "st7567" },
-    { },
+	{ "st7567" },
+	{},
 };
 MODULE_DEVICE_TABLE(spi, st7735r_id);
 
 static int st7735r_probe(struct spi_device *spi)
 {
-    struct device *dev = &spi->dev;
-    struct mipi_dbi_dev *dbidev;
-    struct drm_device *drm;
-    struct mipi_dbi *dbi;
-    struct gpio_desc *dc;
-    u32 rotation = 0;
-    size_t bufsize;
-    int ret;
+	struct device *dev = &spi->dev;
+	struct mipi_dbi_dev *dbidev;
+	struct drm_device *drm;
+	struct mipi_dbi *dbi;
+	struct gpio_desc *dc;
+	u32 rotation = 0;
+	size_t bufsize;
+	int ret;
 
-    printk("%s\n", __func__);
+	printk("%s\n", __func__);
 
-    dbidev = devm_drm_dev_alloc(dev, &st7735r_driver,
-                    struct mipi_dbi_dev, drm);
-    if (IS_ERR(dbidev))
-        return PTR_ERR(dbidev);
+	dbidev = devm_drm_dev_alloc(dev, &st7735r_driver, struct mipi_dbi_dev,
+				    drm);
+	if (IS_ERR(dbidev))
+		return PTR_ERR(dbidev);
 
-    dbi = &dbidev->dbi;
-    drm = &dbidev->drm;
+	dbi = &dbidev->dbi;
+	drm = &dbidev->drm;
 
-    bufsize = (st7735r_mode.vdisplay * st7735r_mode.hdisplay * sizeof(u16));
+	bufsize = (st7735r_mode.vdisplay * st7735r_mode.hdisplay * sizeof(u16));
 
-    dbi->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
-    if (IS_ERR(dbi->reset)) {
-        DRM_DEV_ERROR(dev, "Failed to get gpio 'reset'\n");
-        return PTR_ERR(dbi->reset);
-    }
+	dbi->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
+	if (IS_ERR(dbi->reset)) {
+		DRM_DEV_ERROR(dev, "Failed to get gpio 'reset'\n");
+		return PTR_ERR(dbi->reset);
+	}
 
-    dc = devm_gpiod_get(dev, "dc", GPIOD_OUT_LOW);
-    if (IS_ERR(dc)) {
-        DRM_DEV_ERROR(dev, "Failed to get gpio 'dc'\n");
-        return PTR_ERR(dc);
-    }
+	dc = devm_gpiod_get(dev, "dc", GPIOD_OUT_LOW);
+	if (IS_ERR(dc)) {
+		DRM_DEV_ERROR(dev, "Failed to get gpio 'dc'\n");
+		return PTR_ERR(dc);
+	}
 
-    dbidev->backlight = devm_of_find_backlight(dev);
+	dbidev->backlight = devm_of_find_backlight(dev);
 	if (IS_ERR(dbidev->backlight)) {
-        DRM_DEV_ERROR(dev, "Failed to get backlight device\n");
+		DRM_DEV_ERROR(dev, "Failed to get backlight device\n");
 		return PTR_ERR(dbidev->backlight);
-    }
+	}
 
-    device_property_read_u32(dev, "rotation", &rotation);
-    printk("rotation: %d\n", rotation);
+	device_property_read_u32(dev, "rotation", &rotation);
+	printk("rotation: %d\n", rotation);
 
-    ret = mipi_dbi_spi_init(spi, dbi, dc);
-    if (ret)
-        return ret;
+	ret = mipi_dbi_spi_init(spi, dbi, dc);
+	if (ret)
+		return ret;
 
-    dbi->read_commands = NULL;
+	dbi->read_commands = NULL;
 
-    ret = mipi_dbi_dev_init_with_formats(dbidev, &st7735r_pipe_funcs,
-        st7735r_formats, ARRAY_SIZE(st7735r_formats),
-        &st7735r_mode, rotation, bufsize);
-    if (ret)
-        return ret;
+	ret = mipi_dbi_dev_init_with_formats(dbidev, &st7735r_pipe_funcs,
+					     st7735r_formats,
+					     ARRAY_SIZE(st7735r_formats),
+					     &st7735r_mode, rotation, bufsize);
+	if (ret)
+		return ret;
 
-    drm_mode_config_reset(drm);
+	drm_mode_config_reset(drm);
 
-    ret = drm_dev_register(drm, 0);
-    if (ret)
-        return ret;
+	ret = drm_dev_register(drm, 0);
+	if (ret)
+		return ret;
 
-    spi_set_drvdata(spi, drm);
+	spi_set_drvdata(spi, drm);
 
-    drm_fbdev_generic_setup(drm, 0);
+	drm_fbdev_generic_setup(drm, 0);
 
-    return 0;
+	return 0;
 }
 
 static int st7735r_remove(struct spi_device *spi)
 {
-    struct drm_device *drm = spi_get_drvdata(spi);
+	struct drm_device *drm = spi_get_drvdata(spi);
 
-    printk("%s\n", __func__);
+	printk("%s\n", __func__);
 
-    drm_dev_unplug(drm);
-    drm_atomic_helper_shutdown(drm);
+	drm_dev_unplug(drm);
+	drm_atomic_helper_shutdown(drm);
 
-    return 0;
+	return 0;
 }
 
 static void st7735r_shutdown(struct spi_device *spi)
 {
-    printk("%s\n", __func__);
-    drm_atomic_helper_shutdown(spi_get_drvdata(spi));
+	printk("%s\n", __func__);
+	drm_atomic_helper_shutdown(spi_get_drvdata(spi));
 }
 
 static struct spi_driver st7735r_spi_driver = {
