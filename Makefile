@@ -15,3 +15,6 @@ st7565_tinydrm-objs := st7565.o drm_mipi_dbi.o drm_fb_cma_helper.o
 
 obj-m += st7735r_tinydrm.o
 st7735r_tinydrm-objs := st7735r.o drm_mipi_dbi.o drm_fb_cma_helper.o
+
+obj-m += st7305_tinydrm.o
+st7305_tinydrm-objs := st7305.o drm_mipi_dbi.o drm_fb_cma_helper.o
