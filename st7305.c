@@ -57,6 +57,8 @@ struct st7305_panel_desc {
 	u8 caset[2];
 	u8 raset[2];
 
+	u8 page_size; // each page contains two rows
+
 	int (*init_seq)(struct st7305 *st7305);
 };
 
@@ -111,9 +113,10 @@ static void st7305_pipe_disable(struct drm_simple_display_pipe *pipe)
 	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_OFF);
 }
 
-static inline void st7305_draw_pixel(u8 *dst, uint x, uint y, u8 gray)
+static inline void st7305_draw_pixel(u8 *dst, uint x, uint y, u8 page_size,
+				     u8 gray)
 {
-	u32 byte_index = ((y >> 1) * 42) + (x >> 2);
+	u32 byte_index = ((y >> 1) * page_size) + (x >> 2);
 	u32 bit_index = ((x & 3) << 1) | (y & 1);
 	u8 mask = 1u << (7 - bit_index);
 	u8 set = (gray >> 7) * mask;
@@ -125,20 +128,25 @@ static void st7305_xrgb8888_to_monochrome(u8 *dst, void *vaddr,
 					  struct drm_framebuffer *fb,
 					  struct drm_rect *clip)
 {
+	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(fb->dev);
 	size_t len = (clip->x2 - clip->x1) * (clip->y2 - clip->y1);
+	struct st7305 *st7305 = dbidev_to_st7305(dbidev);
 	unsigned int x, y;
 	u8 *src, *buf;
+	u8 page_size;
 
 	buf = kmalloc(len, GFP_KERNEL);
 	if (!buf)
 		return;
+
+	page_size = st7305->desc->page_size;
 
 	drm_fb_xrgb8888_to_gray8(buf, vaddr, fb, clip);
 	src = buf;
 
 	for (y = clip->y1; y < clip->y2; y++)
 		for (x = clip->x1; x < clip->x2; x++)
-			st7305_draw_pixel(dst, x, y, *src++);
+			st7305_draw_pixel(dst, x, y, page_size, *src++);
 
 	kfree(buf);
 }
@@ -306,6 +314,8 @@ static const struct st7305_panel_desc fp_290h07b_desc = {
 	.raset[0] = 0x00,
 	.raset[1] = 0xBF, // 192*2=384
 
+	.page_size = 42, // 168/8*2=42
+
 	.init_seq = fp_290h07b_init_seq,
 };
 
@@ -403,7 +413,7 @@ static int st7305_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	/* panel doesn't have SDO signal */
+	/* SDO signal is not available on this panel. */
 	dbi->read_commands = NULL;
 
 	ret = mipi_dbi_dev_init_with_formats(dbidev, &st7305_pipe_funcs,
