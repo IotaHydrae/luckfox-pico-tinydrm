@@ -332,6 +332,42 @@ static const struct st7305_panel_desc ydp154h008_v3_desc = {
 	.init_seq = ydp154h008_v3_init_seq,
 };
 
+static int ydp213h001_v3_init_seq(struct st7305 *st7305)
+{
+	struct mipi_dbi *dbi = st7305->dbi;
+
+	mipi_dbi_command(dbi, 0xD6, 0x17, 0x02); // NVM Load Control
+	mipi_dbi_command(dbi, 0xC0, 0x0E, 0x05); // Gate Voltage Setting
+	// mipi_dbi_command(dbi, 0xB2, 0x15); // Frame Rate Control
+
+	mipi_dbi_command(dbi, 0xB0, 0x3F); // Gate Line Setting: 252 line
+
+	return 0;
+}
+
+static const struct drm_display_mode ydp213h001_v3_mode = {
+	DRM_SIMPLE_MODE(122, 250, 24, 49),
+};
+
+static const struct st7305_panel_desc ydp213h001_v3_desc = {
+	.mode = &ydp213h001_v3_mode,
+
+	.caset[0] = 0x19,
+	.caset[1] = 0x23,
+
+	.raset[0] = 0x00,
+	.raset[1] = 0x7C,
+
+	.left_offset = 10,
+
+	.page_size = 33, // 122/4=30.5≈33 (3 bytes per write)
+	.page_count = 125, // 252/2=125
+
+	.bufsize = 33 * 125,
+
+	.init_seq = ydp213h001_v3_init_seq,
+};
+
 static int ydp290h001_v3_init_seq(struct st7305 *st7305)
 {
 	struct mipi_dbi *dbi = st7305->dbi;
@@ -365,6 +401,52 @@ static const struct st7305_panel_desc ydp290h001_v3_desc = {
 	.init_seq = ydp290h001_v3_init_seq,
 };
 
+static int ydp420h001_v3_init_seq(struct st7305 *st7305)
+{
+	struct mipi_dbi *dbi = st7305->dbi;
+
+	mipi_dbi_command(dbi, 0xD6, 0x17, 0x02); // NVM Load Control
+	mipi_dbi_command(dbi, 0xC0, 0x11, 0x04); // Gate Voltage Setting
+
+	mipi_dbi_command(dbi, 0xC1, 0x37, 0x37, 0x37,
+			 0x37); // VSHP Setting (4.8V)
+	mipi_dbi_command(dbi, 0xC2, 0x19, 0x19, 0x19,
+			 0x19); // VSLP Setting (0.5V)
+	mipi_dbi_command(dbi, 0xC4, 0x41, 0x41, 0x41,
+			 0x41); // VSHN Setting (-3.8V)
+	mipi_dbi_command(dbi, 0xC5, 0x19, 0x19, 0x19,
+			 0x19); // VSLN Setting (0.5V)
+
+	mipi_dbi_command(dbi, 0x35, 0x00);
+	mipi_dbi_command(dbi, 0xD8, 0xA6, 0xE9);
+	mipi_dbi_command(dbi, 0xB0, 0x64); // Gate Line Setting: 400 line
+
+	return 0;
+}
+
+static const struct drm_display_mode ydp420h001_v3_mode = {
+	DRM_SIMPLE_MODE(300, 400, 64, 85),
+};
+
+static const struct st7305_panel_desc ydp420h001_v3_desc = {
+	.mode = &ydp420h001_v3_mode,
+
+	.caset[0] = 0x05,
+	.caset[1] = 0x36,
+
+	.raset[0] = 0x00,
+	.raset[1] = 0xC7,
+
+	.left_offset = 144,
+
+	.page_size = 150,
+	.page_count = 200,
+
+	.bufsize = 150 * 200,
+
+	.init_seq = ydp420h001_v3_init_seq,
+};
+
 DEFINE_DRM_GEM_CMA_FOPS(st7305_fops);
 
 static struct drm_driver st7305_driver = {
@@ -382,7 +464,10 @@ static struct drm_driver st7305_driver = {
 static const struct of_device_id st7305_of_match[] = {
 	{ .compatible = "sitronix,st7567", .data = &ydp290h001_v3_desc },
 	{ .compatible = "osptek,ydp154h008-v3", .data = &ydp154h008_v3_desc },
+	{ .compatible = "osptek,ydp213h001-v3",
+	  .data = &ydp213h001_v3_desc }, /* FIXME: display freezes after a few seconds */
 	{ .compatible = "osptek,ydp290h001-v3", .data = &ydp290h001_v3_desc },
+	{ .compatible = "osptek,ydp420h001-v3", .data = &ydp420h001_v3_desc },
 	{},
 };
 MODULE_DEVICE_TABLE(of, st7305_of_match);
@@ -390,7 +475,9 @@ MODULE_DEVICE_TABLE(of, st7305_of_match);
 static const struct spi_device_id st7305_id[] = {
 	{ "st7305" },
 	{ "ydp154h008-v3" },
+	{ "ydp213h001-v3" },
 	{ "ydp290h001-v3" },
+	{ "ydp420h001-v3" },
 	{},
 };
 MODULE_DEVICE_TABLE(spi, st7305_id);
