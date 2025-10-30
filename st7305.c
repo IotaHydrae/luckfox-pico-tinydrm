@@ -54,10 +54,15 @@ struct st7305 {
 struct st7305_panel_desc {
 	const struct drm_display_mode *mode;
 
-	u8 caset[2];
-	u8 raset[2];
+	u8 caset[2]; // column address start->end
+	u8 raset[2]; // row address start->end
+
+	u8 left_offset; // offset pixels from the left
 
 	u8 page_size; // each page contains two rows
+	u8 page_count;
+
+	size_t bufsize;
 
 	int (*init_seq)(struct st7305 *st7305);
 };
@@ -91,6 +96,7 @@ static void st7305_pipe_enable(struct drm_simple_display_pipe *pipe,
 	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
 	struct mipi_dbi *dbi = &dbidev->dbi;
 	struct st7305 *st7305 = dbi_to_st7305(dbi);
+	u8 addr_mode;
 	int idx;
 
 	if (!drm_dev_enter(pipe->crtc.dev, &idx))
@@ -99,6 +105,58 @@ static void st7305_pipe_enable(struct drm_simple_display_pipe *pipe,
 	DRM_DEBUG_KMS("\n");
 
 	st7305_reset(dbi);
+
+	mipi_dbi_command(dbi, 0xD1, 0x01); // Booster Enable
+	mipi_dbi_command(dbi, 0xC0, 0x12, 0x0A); // Gate Voltage Setting
+
+	mipi_dbi_command(dbi, 0xC1, 0x3C, 0x3E, 0x3C,
+			 0x3C); // VSHP Setting (4.8V)
+	mipi_dbi_command(dbi, 0xC2, 0x23, 0x21, 0x23,
+			 0x23); // VSLP Setting (0.98V)
+	mipi_dbi_command(dbi, 0xC4, 0x5A, 0x5C, 0x5A,
+			 0x5A); // VSHN Setting (-3.6V)
+	mipi_dbi_command(dbi, 0xC5, 0x37, 0x35, 0x37,
+			 0x37); // VSLN Setting (0.22V)
+
+	mipi_dbi_command(dbi, 0xD8, 0x80, 0xE9);
+
+	mipi_dbi_command(dbi, 0xB2, 0x02); // Frame Rate Control
+
+	// Update Period Gate EQ Control in HPM
+	mipi_dbi_command(dbi, 0xB3, 0xE5, 0xF6, 0x17, 0x77, 0x77, 0x77, 0x77,
+			 0x77, 0x77, 0x71);
+	// Update Period Gate EQ Control in LPM
+	mipi_dbi_command(dbi, 0xB4, 0x05, 0x46, 0x77, 0x77, 0x77, 0x77, 0x76,
+			 0x45);
+	mipi_dbi_command(dbi, 0x62, 0x32, 0x03, 0x1F); // Gate Timing Control
+
+	mipi_dbi_command(dbi, 0xB7, 0x13); // Source EQ Enable
+
+	mipi_dbi_command(dbi, MIPI_DCS_EXIT_SLEEP_MODE);
+	msleep(120);
+
+	mipi_dbi_command(dbi, 0xC9, 0x00); // Source Voltage Select
+
+	switch (dbidev->rotation) {
+	default:
+		addr_mode = ST7305_MADCTL_MX | ST7305_MADCTL_GS;
+		break;
+	case 90:
+	case 180:
+	case 270:
+		addr_mode = ST7305_MADCTL_MX | ST7305_MADCTL_GS;
+		printk("%s, Rotation is not supported yet.", __func__);
+		break;
+	}
+	mipi_dbi_command(dbi, MIPI_DCS_SET_ADDRESS_MODE, addr_mode);
+	mipi_dbi_command(dbi, MIPI_DCS_SET_PIXEL_FORMAT,
+			 0x11); // 3 write for 24bit
+	mipi_dbi_command(dbi, 0xB9, 0x20); // Gamma Mode Setting
+	mipi_dbi_command(dbi, 0xB8, 0x29); // Panel Setting
+	mipi_dbi_command(dbi, 0xD0, 0xFF); // Auto power down
+	mipi_dbi_command(dbi, 0x38); // High Power Mode on
+	mipi_dbi_command(dbi, 0xBB, 0x4F); // Enable Clear RAM
+	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_ON);
 
 	st7305->desc->init_seq(st7305);
 
@@ -109,15 +167,18 @@ static void st7305_pipe_disable(struct drm_simple_display_pipe *pipe)
 {
 	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
 	struct mipi_dbi *dbi = &dbidev->dbi;
+
 	DRM_DEBUG_KMS("\n");
+
 	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_OFF);
 }
 
-static inline void st7305_draw_pixel(u8 *dst, uint x, uint y, u8 page_size,
-				     u8 gray)
+static inline void st7305_draw_pixel(u8 *dst, uint x, uint y, u8 left_offset,
+				     u8 page_size, u8 gray)
 {
-	u32 byte_index = ((y >> 1) * page_size) + (x >> 2);
-	u32 bit_index = ((x & 3) << 1) | (y & 1);
+	uint new_x = x + left_offset;
+	u32 byte_index = ((y >> 1) * page_size) + (new_x >> 2);
+	u32 bit_index = ((new_x & 3) << 1) | (y & 1);
 	u8 mask = 1u << (7 - bit_index);
 	u8 set = (gray >> 7) * mask;
 
@@ -131,14 +192,15 @@ static void st7305_xrgb8888_to_monochrome(u8 *dst, void *vaddr,
 	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(fb->dev);
 	size_t len = (clip->x2 - clip->x1) * (clip->y2 - clip->y1);
 	struct st7305 *st7305 = dbidev_to_st7305(dbidev);
+	u8 offset, page_size;
 	unsigned int x, y;
 	u8 *src, *buf;
-	u8 page_size;
 
 	buf = kmalloc(len, GFP_KERNEL);
 	if (!buf)
 		return;
 
+	offset = st7305->desc->left_offset;
 	page_size = st7305->desc->page_size;
 
 	drm_fb_xrgb8888_to_gray8(buf, vaddr, fb, clip);
@@ -146,7 +208,7 @@ static void st7305_xrgb8888_to_monochrome(u8 *dst, void *vaddr,
 
 	for (y = clip->y1; y < clip->y2; y++)
 		for (x = clip->x1; x < clip->x2; x++)
-			st7305_draw_pixel(dst, x, y, page_size, *src++);
+			st7305_draw_pixel(dst, x, y, offset, page_size, *src++);
 
 	kfree(buf);
 }
@@ -181,6 +243,7 @@ static void st7305_fb_dirty(struct drm_framebuffer *fb, struct drm_rect *rect)
 	struct mipi_dbi *dbi = &dbidev->dbi;
 	struct st7305 *st7305 = dbi_to_st7305(dbi);
 	const u8 *caset, *raset;
+	size_t bufsize;
 	int ret = 0;
 	int idx;
 
@@ -192,6 +255,7 @@ static void st7305_fb_dirty(struct drm_framebuffer *fb, struct drm_rect *rect)
 
 	caset = st7305->desc->caset;
 	raset = st7305->desc->raset;
+	bufsize = st7305->desc->bufsize;
 
 	ret = st7305_buf_copy(dbidev->tx_buf, fb, rect);
 	if (ret)
@@ -202,8 +266,7 @@ static void st7305_fb_dirty(struct drm_framebuffer *fb, struct drm_rect *rect)
 	mipi_dbi_command(dbi, MIPI_DCS_SET_PAGE_ADDRESS, raset[0], raset[1]);
 
 	ret = mipi_dbi_command_buf(dbi, MIPI_DCS_WRITE_MEMORY_START,
-				   (u8 *)dbidev->tx_buf,
-				   (fb->width / 4) * (fb->height / 2));
+				   (u8 *)dbidev->tx_buf, bufsize);
 err_msg:
 	if (ret)
 		dev_err_once(fb->dev->dev, "Failed to update display %d\n",
@@ -236,77 +299,55 @@ static const struct drm_simple_display_pipe_funcs st7305_pipe_funcs = {
 	.prepare_fb = drm_gem_fb_simple_display_pipe_prepare_fb,
 };
 
-static int fp_290h07b_init_seq(struct st7305 *st7305)
+static int ydp154h008_v3_init_seq(struct st7305 *st7305)
 {
-	struct mipi_dbi_dev *dbidev = st7305->dbidev;
 	struct mipi_dbi *dbi = st7305->dbi;
-	u8 addr_mode;
 
-	mipi_dbi_command(dbi, 0xD6, 0x13, 0x02); // NVM Load Control
-	mipi_dbi_command(dbi, 0xD1, 0x01); // Booster Enable
-	mipi_dbi_command(dbi, 0xC0, 0x08, 0x06); // Gate Voltage Setting
-
-	mipi_dbi_command(dbi, 0xC1, 0x3C, 0x3E, 0x3C,
-			 0x3C); // VSHP Setting (4.8V)
-	mipi_dbi_command(dbi, 0xC2, 0x23, 0x21, 0x23,
-			 0x23); // VSLP Setting (0.98V)
-	mipi_dbi_command(dbi, 0xC4, 0x5A, 0x5C, 0x5A,
-			 0x5A); // VSHN Setting (-3.6V)
-	mipi_dbi_command(dbi, 0xC5, 0x37, 0x35, 0x37,
-			 0x37); // VSLN Setting (0.22V)
-
-	mipi_dbi_command(dbi, 0xD8, 0x80, 0xE9);
-
-	mipi_dbi_command(dbi, 0xB2, 0x02); // Frame Rate Control
-
-	// Update Period Gate EQ Control in HPM
-	mipi_dbi_command(dbi, 0xB3, 0xE5, 0xF6, 0x17, 0x77, 0x77, 0x77, 0x77,
-			 0x77, 0x77, 0x71);
-	// Update Period Gate EQ Control in LPM
-	mipi_dbi_command(dbi, 0xB4, 0x05, 0x46, 0x77, 0x77, 0x77, 0x77, 0x76,
-			 0x45);
-	mipi_dbi_command(dbi, 0x62, 0x32, 0x03, 0x1F); // Gate Timing Control
-
-	mipi_dbi_command(dbi, 0xB7, 0x13); // Source EQ Enable
-	mipi_dbi_command(dbi, 0xB0, 0x60); // Gate Line Setting: 384 line
-
-	mipi_dbi_command(dbi, MIPI_DCS_EXIT_SLEEP_MODE);
-	msleep(120);
-
-	mipi_dbi_command(dbi, 0xC9, 0x00); // Source Voltage Select
-
-	switch (dbidev->rotation) {
-	default:
-		addr_mode = ST7305_MADCTL_MX | ST7305_MADCTL_GS;
-		break;
-	case 90:
-	case 180:
-	case 270:
-		addr_mode = ST7305_MADCTL_MX | ST7305_MADCTL_GS;
-		printk("%s, Rotation is not supported yet.", __func__);
-		break;
-	}
-	mipi_dbi_command(dbi, MIPI_DCS_SET_ADDRESS_MODE, addr_mode);
-
-	mipi_dbi_command(dbi, MIPI_DCS_SET_PIXEL_FORMAT,
-			 0x11); // 3 write for 24bit
-	mipi_dbi_command(dbi, 0xB9, 0x20); // Gamma Mode Setting
-	mipi_dbi_command(dbi, 0xB8, 0x29); // Panel Setting
-	// mipi_dbi_command(dbi, MIPI_DCS_SET_COLUMN_ADDRESS, 0x17, 0x24);
-	// mipi_dbi_command(dbi, MIPI_DCS_SET_PAGE_ADDRESS, 0x00, 0xBF);
-	mipi_dbi_command(dbi, 0xD0, 0xFF); // Auto power down
-	mipi_dbi_command(dbi, 0x38); // High Power Mode on
-	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_ON);
+	mipi_dbi_command(dbi, 0xD6, 0x17, 0x02); // NVM Load Control
+	mipi_dbi_command(dbi, 0xB0, 0x32); // Gate Line Setting: 200 line
 
 	return 0;
 }
 
-static const struct drm_display_mode fp_290h07b_mode = {
+static const struct drm_display_mode ydp154h008_v3_mode = {
+	DRM_SIMPLE_MODE(200, 200, 28, 28),
+};
+
+static const struct st7305_panel_desc ydp154h008_v3_desc = {
+	.mode = &ydp154h008_v3_mode,
+
+	.caset[0] = 0x16,
+	.caset[1] = 0x26,
+
+	.raset[0] = 0x00,
+	.raset[1] = 0x63,
+
+	.left_offset = 4,
+
+	.page_size = 51, // 200/8*2=50≈51 (3 bytes per write)
+	.page_count = 100, // 200/2=100
+
+	.bufsize = 51 * 100,
+
+	.init_seq = ydp154h008_v3_init_seq,
+};
+
+static int ydp290h001_v3_init_seq(struct st7305 *st7305)
+{
+	struct mipi_dbi *dbi = st7305->dbi;
+
+	mipi_dbi_command(dbi, 0xD6, 0x13, 0x02); // NVM Load Control
+	mipi_dbi_command(dbi, 0xB0, 0x60); // Gate Line Setting: 384 line
+
+	return 0;
+}
+
+static const struct drm_display_mode ydp290h001_v3_mode = {
 	DRM_SIMPLE_MODE(168, 384, 29, 67),
 };
 
-static const struct st7305_panel_desc fp_290h07b_desc = {
-	.mode = &fp_290h07b_mode,
+static const struct st7305_panel_desc ydp290h001_v3_desc = {
+	.mode = &ydp290h001_v3_mode,
 
 	.caset[0] = 0x17,
 	.caset[1] = 0x24, // 0X24-0X17=14 // 14*4*3=168
@@ -314,9 +355,14 @@ static const struct st7305_panel_desc fp_290h07b_desc = {
 	.raset[0] = 0x00,
 	.raset[1] = 0xBF, // 192*2=384
 
-	.page_size = 42, // 168/8*2=42
+	.left_offset = 0,
 
-	.init_seq = fp_290h07b_init_seq,
+	.page_size = 42, // 168/8*2=42
+	.page_count = 192,
+
+	.bufsize = 42 * 192,
+
+	.init_seq = ydp290h001_v3_init_seq,
 };
 
 DEFINE_DRM_GEM_CMA_FOPS(st7305_fops);
@@ -334,21 +380,24 @@ static struct drm_driver st7305_driver = {
 };
 
 static const struct of_device_id st7305_of_match[] = {
-	{ .compatible = "sitronix,st7567", .data = &fp_290h07b_desc },
-	{ .compatible = "opstek,fp-290h07b", .data = &fp_290h07b_desc },
+	{ .compatible = "sitronix,st7567", .data = &ydp290h001_v3_desc },
+	{ .compatible = "osptek,ydp154h008-v3", .data = &ydp154h008_v3_desc },
+	{ .compatible = "osptek,ydp290h001-v3", .data = &ydp290h001_v3_desc },
 	{},
 };
 MODULE_DEVICE_TABLE(of, st7305_of_match);
 
 static const struct spi_device_id st7305_id[] = {
 	{ "st7305" },
-	{ "fp-290h07b" },
+	{ "ydp154h008-v3" },
+	{ "ydp290h001-v3" },
 	{},
 };
 MODULE_DEVICE_TABLE(spi, st7305_id);
 
 static int st7305_probe(struct spi_device *spi)
 {
+	const struct drm_display_mode *mode;
 	struct device *dev = &spi->dev;
 	struct mipi_dbi_dev *dbidev;
 	struct drm_device *drm;
@@ -380,10 +429,11 @@ static int st7305_probe(struct spi_device *spi)
 	if (!st7305->desc)
 		return -ENODEV;
 
-	width = st7305->desc->mode->hdisplay;
-	height = st7305->desc->mode->vdisplay;
-	// bufsize = (width * height * sizeof(u16));
-	bufsize = (width / 4) * (height / 2);
+	mode = st7305->desc->mode;
+	width = mode->hdisplay;
+	height = mode->vdisplay;
+	bufsize = st7305->desc->bufsize;
+	dev_info(dev, "bufsize: %zu (bytes)\n", bufsize);
 
 	dbi->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(dbi->reset)) {
@@ -418,9 +468,8 @@ static int st7305_probe(struct spi_device *spi)
 
 	ret = mipi_dbi_dev_init_with_formats(dbidev, &st7305_pipe_funcs,
 					     st7305_formats,
-					     ARRAY_SIZE(st7305_formats),
-					     &fp_290h07b_mode, rotation,
-					     bufsize);
+					     ARRAY_SIZE(st7305_formats), mode,
+					     rotation, bufsize);
 	if (ret)
 		return ret;
 
